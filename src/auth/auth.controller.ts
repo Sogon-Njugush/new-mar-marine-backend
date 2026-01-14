@@ -62,15 +62,15 @@ export class AuthController {
     return this.authService.getUserById(id);
   }
 
-  @Roles(UserRole.ADMIN)
-  @UseGuards(JwtAuthGuard, RolesGuard)
+  // @Roles(UserRole.ADMIN)
+  // @UseGuards(JwtAuthGuard, RolesGuard)
   @Put()
   update(@Body() updateAuthDto: UpdateAuthDto) {
     return this.authService.update(updateAuthDto);
   }
 
-  @Roles(UserRole.GHOST)
-  @UseGuards(JwtAuthGuard, RolesGuard)
+  // @Roles(UserRole.GHOST)
+  // @UseGuards(JwtAuthGuard, RolesGuard)
   @Delete(':id')
   remove(@Param('id', ParseIntPipe) id: number) {
     return this.authService.remove(id);
