@@ -22,8 +22,8 @@ import { RolesGuard } from 'src/auth/guards/roles-guard';
 export class RoleController {
   constructor(private readonly roleService: RoleService) {}
 
-  @Roles(UserRole.ADMIN)
-  @UseGuards(JwtAuthGuard, RolesGuard)
+  // @Roles(UserRole.ADMIN)
+  // @UseGuards(JwtAuthGuard, RolesGuard)
   @Post()
   create(@Body() createRoleDto: CreateRoleDto): Promise<Role> {
     return this.roleService.create(createRoleDto);
