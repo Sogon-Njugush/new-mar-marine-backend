@@ -146,9 +146,9 @@ export class WialonService implements OnModuleInit {
       return { message: 'No template IDs provided' };
     }
 
-    this.logger.log(
-      `🔀 Batch Report: ${new Date(from * 1000).toISOString()} -> ${new Date(to * 1000).toISOString()}`,
-    );
+    // this.logger.log(
+    //   `🔀 Batch Report: ${new Date(from * 1000).toISOString()} -> ${new Date(to * 1000).toISOString()}`,
+    // );
 
     const mergedStats: any[] = [];
     const mergedTables: any[] = [];
