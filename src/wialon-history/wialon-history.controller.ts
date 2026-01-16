@@ -14,6 +14,20 @@ export class WialonHistoryController {
     };
   }
 
+  @Get('data')
+  async getHistoryData(
+    @Query('unitId') unitId?: string,
+    @Query('from') from?: string, // YYYY-MM-DD
+    @Query('to') to?: string, // YYYY-MM-DD
+  ) {
+    // Fetches from 'wialon_daily_reports' table (JSONB data)
+    return this.historyService.getHistoryRange(
+      unitId ? parseInt(unitId) : undefined,
+      from,
+      to,
+    );
+  }
+
   @Get('day')
   async getDailyData(
     @Query('date') date: string, // Format YYYY-MM-DD

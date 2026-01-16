@@ -6,9 +6,8 @@ export class ExecuteReportDto {
 
   @IsOptional()
   @IsNumber()
-  templateId?: number; // Keep for backward compatibility
+  templateId?: number;
 
-  // 👇 New field for merging multiple reports
   @IsOptional()
   @IsArray()
   templateIds?: number[];
@@ -16,11 +15,17 @@ export class ExecuteReportDto {
   @IsNumber()
   objectId: number;
 
+  // 👇 CHANGED: Removed @IsNumber() so it accepts Strings ("2026-01-01") OR Numbers
   @IsOptional()
-  @IsNumber()
-  from?: number;
+  from?: string | number;
 
   @IsOptional()
-  @IsNumber()
-  to?: number;
+  from_time?: string;
+
+  // 👇 CHANGED: Removed @IsNumber()
+  @IsOptional()
+  to?: string | number;
+
+  @IsOptional()
+  to_time?: string;
 }

@@ -18,7 +18,7 @@ export class WialonHistoryService {
   // 📅 SYNC LAST 3 MONTHS
   // ===========================================================================
   async syncLastThreeMonths() {
-    this.logger.log('⏳ Starting 90-Day History Sync...');
+    // this.logger.log('⏳ Starting 90-Day History Sync...');
 
     const units = await this.wialonService.getUnits();
     const templates = await this.wialonService.getAllReportTemplates();
@@ -40,7 +40,7 @@ export class WialonHistoryService {
       const to = from + 86399; // End of day
 
       const dateString = date.toISOString().split('T')[0];
-      this.logger.log(`📅 Processing Date: ${dateString}`);
+      // this.logger.log(`📅 Processing Date: ${dateString}`);
 
       for (const unit of units) {
         for (const temp of targetTemplates) {
@@ -48,7 +48,7 @@ export class WialonHistoryService {
         }
       }
     }
-    this.logger.log('✅ 90-Day History Sync Complete.');
+    // this.logger.log('✅ 90-Day History Sync Complete.');
     return { message: 'Sync started in background (check logs)' };
   }
 
@@ -87,13 +87,33 @@ export class WialonHistoryService {
           ['unitId', 'date', 'reportName'],
         ); // Unique constraint conflict path
 
-        this.logger.debug(
-          `💾 Saved ${template.templateName} for ${unit.name} on ${dateString}`,
-        );
+        // this.logger.debug(
+        //   `💾 Saved ${template.templateName} for ${unit.name} on ${dateString}`,
+        // );
       }
     } catch (e) {
       this.logger.error(`Failed ${unit.name} on ${dateString}: ${e.message}`);
     }
+  }
+
+  async getHistoryRange(unitId?: number, from?: string, to?: string) {
+    const query = this.reportRepo
+      .createQueryBuilder('report')
+      .orderBy('report.date', 'DESC');
+
+    if (unitId) {
+      query.andWhere('report.unitId = :unitId', { unitId });
+    }
+
+    // Filter by Date Range (if provided)
+    if (from) {
+      query.andWhere('report.date >= :from', { from });
+    }
+    if (to) {
+      query.andWhere('report.date <= :to', { to });
+    }
+
+    return await query.getMany();
   }
 
   // ===========================================================================

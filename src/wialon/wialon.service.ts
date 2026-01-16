@@ -102,17 +102,16 @@ export class WialonService implements OnModuleInit {
     return this.transformTemplatesResponse(data);
   }
 
+  // 1. SINGLE REPORT EXECUTION
   async executeReport(dto: ExecuteReportDto): Promise<any> {
     const sid = await this.getValidSession();
 
-    // 🛡️ GUARD: Ensure templateId exists for single execution
     if (!dto.templateId) {
       throw new Error('Template ID is required for single report execution.');
     }
 
-    // 👇 30 DAYS LOGIC
-    const to = dto.to || Math.floor(Date.now() / 1000);
-    const from = dto.from || to - 30 * 24 * 60 * 60;
+    // Convert Dates
+    const { from, to } = this.resolveDateRange(dto.from, dto.to);
 
     this.logger.log(
       `📝 Manual Report: ${new Date(from * 1000).toISOString()} to ${new Date(to * 1000).toISOString()}`,
@@ -123,7 +122,7 @@ export class WialonService implements OnModuleInit {
       { id: dto.objectId, name: 'Manual Run' },
       {
         resourceId: dto.resourceId,
-        templateId: dto.templateId, // ✅ TypeScript now knows this is definitely a number
+        templateId: dto.templateId,
         name: 'Manual',
         templateType: 'avl_unit',
       },
@@ -133,73 +132,13 @@ export class WialonService implements OnModuleInit {
     );
   }
 
-  async getStoredData(
-    unitId?: number,
-    from?: string,
-    to?: string,
-  ): Promise<UnitEngineHours[]> {
-    const query = this.engineHoursRepo
-      .createQueryBuilder('report')
-      .leftJoinAndSelect('report.unit', 'unit')
-      .orderBy('report.time_begin', 'DESC');
-
-    if (unitId) query.andWhere('report.unit_id = :unitId', { unitId });
-
-    if (!from) {
-      const date = new Date();
-      date.setDate(date.getDate() - 30);
-      from = date.toISOString().split('T')[0];
-    }
-
-    query.andWhere('report.time_begin >= :from', { from: new Date(from) });
-    if (to) query.andWhere('report.time_end <= :to', { to: new Date(to) });
-
-    return await query.getMany();
-  }
-
-  // ===========================================================================
-  // ⏰ AUTOMATED CRON JOB (30 Days Sync)
-  // ===========================================================================
-
-  @Cron('*/30 * * * *')
-  async dailySync() {
-    if (this.isSyncRunning) return;
-    this.isSyncRunning = true;
-    this.logger.log('🚀 Starting Wialon Sync...');
-
-    try {
-      const sid = await this.getValidSession();
-      const reportConfigs = await this.getReportConfigurations(sid);
-      const units = await this.getUnits(sid);
-
-      const to = Math.floor(Date.now() / 1000);
-      const from = to - 30 * 24 * 60 * 60; // 30 Days back
-
-      for (const unit of units) {
-        for (const config of reportConfigs) {
-          await this.processUnitReport(sid, unit, config, from, to, true);
-        }
-      }
-      this.logger.log('✅ Sync Completed.');
-    } catch (error) {
-      this.logger.error('Sync Failed', error);
-    } finally {
-      this.isSyncRunning = false;
-    }
-  }
-
-  // ===========================================================================
-  // 🔄 BATCH / MERGE EXECUTION
-  // ===========================================================================
-
+  // 2. BATCH REPORT EXECUTION (Merging Data)
   async executeBatchReports(dto: ExecuteReportDto): Promise<any> {
     const sid = await this.getValidSession();
 
-    // Default 30 days calculation
-    const to = dto.to || Math.floor(Date.now() / 1000);
-    const from = dto.from || to - 30 * 24 * 60 * 60;
+    // Convert Dates
+    const { from, to } = this.resolveDateRange(dto.from, dto.to);
 
-    // Determine which templates to run
     const templatesToRun =
       dto.templateIds || (dto.templateId ? [dto.templateId] : []);
 
@@ -208,15 +147,13 @@ export class WialonService implements OnModuleInit {
     }
 
     this.logger.log(
-      `🔀 Merging Reports: Templates [${templatesToRun.join(', ')}] for Unit ${dto.objectId}`,
+      `🔀 Batch Report: ${new Date(from * 1000).toISOString()} -> ${new Date(to * 1000).toISOString()}`,
     );
 
-    // 👇 FIXED: Explicit types added here to prevent 'never' error
     const mergedStats: any[] = [];
     const mergedTables: any[] = [];
     let unitName = 'Unknown';
 
-    // Run sequentially to protect the session
     for (const tId of templatesToRun) {
       const result = await this.processUnitReport(
         sid,
@@ -235,12 +172,10 @@ export class WialonService implements OnModuleInit {
       if (result && !result.error && !result.message) {
         if (result.unit) unitName = result.unit;
 
-        // Merge Stats
         if (result.stats && Array.isArray(result.stats)) {
           mergedStats.push(...result.stats);
         }
 
-        // Merge Tables
         if (result.tables && Array.isArray(result.tables)) {
           const labeledTables = result.tables.map((t: any) => ({
             ...t,
@@ -260,8 +195,131 @@ export class WialonService implements OnModuleInit {
     };
   }
 
+  // 3. DATABASE RETRIEVAL
+  async getStoredData(
+    unitId?: number,
+    from?: string,
+    to?: string,
+  ): Promise<UnitEngineHours[]> {
+    const query = this.engineHoursRepo
+      .createQueryBuilder('report')
+      .leftJoinAndSelect('report.unit', 'unit')
+      .orderBy('report.time_begin', 'DESC');
+
+    if (unitId) {
+      query.andWhere('report.unit_id = :unitId', { unitId });
+    }
+
+    if (from) {
+      query.andWhere('report.time_begin >= :from', { from: new Date(from) });
+    }
+
+    if (to) {
+      query.andWhere('report.time_end <= :to', { to: new Date(to) });
+    }
+
+    return await query.getMany();
+  }
+
   // ===========================================================================
-  // 🏗️ CORE LOGIC (Returns Stats + Rows)
+  // 🔓 PUBLIC DATA FETCHER (Used by History Module)
+  // ===========================================================================
+
+  async fetchRawReportData(
+    unit: { id: number; name: string },
+    templateId: number,
+    resourceId: number,
+    from: number,
+    to: number,
+  ) {
+    const sid = await this.getValidSession();
+
+    return await this.processUnitReport(
+      sid,
+      unit,
+      {
+        resourceId,
+        templateId,
+        name: 'History Sync',
+        templateType: 'avl_unit',
+      },
+      from,
+      to,
+      false,
+    );
+  }
+
+  // ===========================================================================
+  // ⏰ AUTOMATED CRON JOB (30 Days Sync)
+  // ===========================================================================
+
+  @Cron('*/30 * * * *')
+  async dailySync() {
+    if (this.isSyncRunning) return;
+    this.isSyncRunning = true;
+
+    try {
+      const sid = await this.getValidSession();
+      const reportConfigs = await this.getReportConfigurations(sid);
+      const units = await this.getUnits(sid);
+
+      const to = Math.floor(Date.now() / 1000);
+      const from = to - 30 * 24 * 60 * 60; // 30 Days back
+
+      for (const unit of units) {
+        for (const config of reportConfigs) {
+          await this.processUnitReport(sid, unit, config, from, to, true);
+        }
+      }
+    } catch (error) {
+      this.logger.error('Sync Failed', error);
+    } finally {
+      this.isSyncRunning = false;
+    }
+  }
+
+  // ===========================================================================
+  // 🛠️ DATE HELPER (Now properly placed inside the class)
+  // ===========================================================================
+
+  private resolveDateRange(
+    fromInput?: string | number,
+    toInput?: string | number,
+  ) {
+    let to: number;
+    let from: number;
+
+    // 1. Resolve 'TO' Date
+    if (toInput) {
+      if (typeof toInput === 'number') {
+        to = toInput;
+      } else {
+        const d = new Date(toInput);
+        d.setHours(23, 59, 59, 999);
+        to = Math.floor(d.getTime() / 1000);
+      }
+    } else {
+      to = Math.floor(Date.now() / 1000); // Now
+    }
+
+    // 2. Resolve 'FROM' Date
+    if (fromInput) {
+      if (typeof fromInput === 'number') {
+        from = fromInput;
+      } else {
+        const d = new Date(fromInput);
+        d.setHours(0, 0, 0, 0);
+        from = Math.floor(d.getTime() / 1000);
+      }
+    } else {
+      from = to - 30 * 24 * 60 * 60; // Default: 30 Days ago
+    }
+
+    return { from, to };
+  }
+
+  // ===========================================================================
+  // 🏗️ CORE LOGIC
   // ===========================================================================
 
   private async processUnitReport(
@@ -296,7 +354,6 @@ export class WialonService implements OnModuleInit {
       );
       if (result.error) throw new Error(`Wialon Error ${result.error}`);
 
-      // 📊 CAPTURE STATS
       const stats = result.reportResult?.stats || [];
 
       if (!result.reportResult || !result.reportResult.tables) {
@@ -311,7 +368,6 @@ export class WialonService implements OnModuleInit {
       for (let i = 0; i < usefulTables.length; i++) {
         const table = usefulTables[i];
 
-        // Fetch rows with LEVEL 1 to get cell data
         const rowsResponse = await this.performRequest(
           'report/get_result_rows',
           {
@@ -345,48 +401,16 @@ export class WialonService implements OnModuleInit {
         });
       }
 
-      // ✅ RETURN RICH DATA STRUCTURE
       return {
         unit: unit.name,
         report: config.name,
         dateRange: { from: new Date(from * 1000), to: new Date(to * 1000) },
-        stats: stats, // <--- This is what we need to see!
+        stats: stats,
         tables: tablesData,
       };
     } catch (e) {
-      this.logger.error(`Error processing ${unit.name}: ${e.message}`);
       return { error: e.message };
     }
-  }
-
-  // ===========================================================================
-  // 🔓 PUBLIC DATA FETCHER (Used by History Module)
-  // ===========================================================================
-
-  async fetchRawReportData(
-    unit: { id: number; name: string },
-    templateId: number,
-    resourceId: number,
-    from: number,
-    to: number,
-  ) {
-    const sid = await this.getValidSession();
-
-    // Reuse the internal process method but Force Save=False
-    // We want the raw data back so the History Module can save it
-    return await this.processUnitReport(
-      sid,
-      unit,
-      {
-        resourceId,
-        templateId,
-        name: 'History Sync',
-        templateType: 'avl_unit',
-      },
-      from,
-      to,
-      false, // ❌ Do not save to the old EngineHours table
-    );
   }
 
   // ===========================================================================
